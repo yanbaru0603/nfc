@@ -18,7 +18,7 @@ from backend.db import connect, format_utc, init_db, transaction, utc_now
 
 
 DEV_TOKENS = tuple(f"dev-unused-token-{number:04d}" for number in range(1, 4))
-TRACKS = (("朝の光", 261.63), ("風の便り", 329.63), ("星の帰り道", 392.00))
+TRACKS = (("奥多摩の空", 261.63), ("ビールを注ぐ音", 329.63), ("出来立てビール", 392.00))
 
 
 def _generate_wav(path: Path, frequency: float) -> None:
@@ -53,7 +53,7 @@ def seed(
 ) -> None:
     """素材と初期データを登録。再実行時も既存の受取状態を維持。"""
     issued_at = format_utc(utc_now() if now is None else now)
-    cover_path = PROJECT_ROOT / "frontend/public/covers/work-001.svg"
+    cover_path = PROJECT_ROOT / "frontend/public/covers/work-001.jpg"
     if not cover_path.is_file():
         print(f"警告: 表紙ファイルが見つかりません: {cover_path}", file=sys.stderr)
 
@@ -63,7 +63,7 @@ def seed(
     with transaction(conn):
         conn.execute(
             "INSERT INTO works (id, title, cover_path) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
-            ("work-001", "星めぐりの物語", "/covers/work-001.svg"),
+            ("work-001", "星めぐりの物語", "/covers/work-001.jpg"),
         )
         conn.execute(
             "INSERT INTO benefits (id, work_id, title, description) "

@@ -23,12 +23,12 @@ NOW = datetime(2026, 10, 17, 1, 0, 0, tzinfo=UTC)
 TOKEN = DEV_TOKENS[0]
 OTHER_TOKEN = DEV_TOKENS[1]
 
-EXPECTED_WORK = {"id": "work-001", "title": "星めぐりの物語", "cover_path": "/covers/work-001.svg"}
+EXPECTED_WORK = {"id": "work-001", "title": "星めぐりの物語", "cover_path": "/covers/work-001.jpg"}
 EXPECTED_BENEFIT = {"id": "benefit-001", "title": "特装版CD 特典音源", "description": "デモ用に生成した3曲の単音音源"}
 EXPECTED_FILES = [
-    {"id": "file-001", "position": 1, "title": "朝の光", "mime_type": "audio/wav"},
-    {"id": "file-002", "position": 2, "title": "風の便り", "mime_type": "audio/wav"},
-    {"id": "file-003", "position": 3, "title": "星の帰り道", "mime_type": "audio/wav"},
+    {"id": "file-001", "position": 1, "title": "奥多摩の空", "mime_type": "audio/wav"},
+    {"id": "file-002", "position": 2, "title": "ビールを注ぐ音", "mime_type": "audio/wav"},
+    {"id": "file-003", "position": 3, "title": "出来立てビール", "mime_type": "audio/wav"},
 ]
 
 
@@ -141,6 +141,7 @@ class ReceiveApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {
             "state": "unused",
+            "repeatable": False,
             "work": EXPECTED_WORK,
             "benefit": EXPECTED_BENEFIT,
             "files": EXPECTED_FILES,
@@ -206,7 +207,7 @@ class ReceiveApiTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 body = response.json()
                 self.assertEqual(body["state"], expected)
-                self.assertEqual(set(body), {"state", "work", "benefit", "files"})
+                self.assertEqual(set(body), {"state", "repeatable", "work", "benefit", "files"})
                 # 使用済みでも何の特典か分かるよう、表示情報は返す。
                 self.assertEqual(body["work"], EXPECTED_WORK)
                 self.assertEqual(body["benefit"], EXPECTED_BENEFIT)
@@ -309,7 +310,7 @@ class ReceiveApiTest(unittest.TestCase):
     def test_openapi_schema_has_no_file_path(self) -> None:
         schemas = self.client.get("/openapi.json").json()["components"]["schemas"]
         self.assertEqual(set(schemas["BenefitFileOut"]["properties"]), {"id", "position", "title", "mime_type"})
-        self.assertEqual(set(schemas["ReceiveOut"]["properties"]), {"state", "work", "benefit", "files"})
+        self.assertEqual(set(schemas["ReceiveOut"]["properties"]), {"state", "repeatable", "work", "benefit", "files"})
         self.assertEqual(set(schemas["ReceiveOut"]["properties"]["state"]["enum"]),
                          {"unused", "account_owned", "download_retryable", "claimed"})
 

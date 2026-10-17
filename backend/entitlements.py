@@ -140,6 +140,15 @@ def _new_session_id() -> str:
     return secrets.token_urlsafe(32)
 
 
+def allow_repeat_for_uid(conn: sqlite3.Connection, uid: str) -> None:
+    """ローカルCLIで読み取ったカードだけ、一度きりの受取制限から除外する。"""
+    conn.execute("INSERT INTO repeatable_cards (uid) VALUES (?) ON CONFLICT(uid) DO NOTHING", (uid,))
+
+
+def is_repeatable_card(conn: sqlite3.Connection, uid: str) -> bool:
+    return conn.execute("SELECT 1 FROM repeatable_cards WHERE uid = ?", (uid,)).fetchone() is not None
+
+
 # ---- 発行（発行CLI用） ----
 
 def new_token() -> str:
@@ -235,10 +244,19 @@ def claim_for_account(
 ) -> Entitlement:
     """未使用の取得権をアカウントに追加して確定。
 
-    未使用の確認と更新は1つのUPDATE文で行う。受け取り済みなら同じアカウントでも
+    通常カードは未使用の確認と更新を1つのUPDATE文で行う。受け取り済みなら同じアカウントでも
     AlreadyClaimed、存在しない・発行中・無効なら EntitlementNotFound。
+    例外カードは取得権を消費せず、アカウントごとの受取記録を保存する。同じアカウントの再送も成功する。
     """
     with transaction(conn):
+        current = get_public_entitlement(conn, token)
+        if is_repeatable_card(conn, current.uid):
+            conn.execute(
+                "INSERT INTO repeatable_account_claims (token, account_id, claimed_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(token, account_id) DO NOTHING",
+                (token, account_id, format_utc(now)),
+            )
+            return current
         updated = conn.execute(
             "UPDATE entitlements SET status = 'account', account_id = ?, claimed_at = ? "
             "WHERE token = ? AND status = 'unused'",
@@ -262,22 +280,52 @@ def claim_for_download(
 
     状態の更新とセッションの登録を BEGIN IMMEDIATE の1トランザクションで行い、
     どちらかが失敗したら両方とも残さない。例外は claim_for_account と同じ。
+    例外カードは取得権を消費せず、受け取るたびに新しい期限付きセッションを登録する。
     """
     expires_at = format_utc(now + timedelta(seconds=ttl_seconds))
     session_id = _new_session_id()
     with transaction(conn):
-        updated = conn.execute(
-            "UPDATE entitlements SET status = 'download', account_id = NULL, claimed_at = ? "
-            "WHERE token = ? AND status = 'unused'",
-            (format_utc(now), token),
-        ).rowcount
-        if updated != 1:
-            _raise_claim_failure(conn, token)
+        current = get_public_entitlement(conn, token)
+        if not is_repeatable_card(conn, current.uid):
+            updated = conn.execute(
+                "UPDATE entitlements SET status = 'download', account_id = NULL, claimed_at = ? "
+                "WHERE token = ? AND status = 'unused'",
+                (format_utc(now), token),
+            ).rowcount
+            if updated != 1:
+                _raise_claim_failure(conn, token)
         conn.execute(
             "INSERT INTO download_sessions (id, token, expires_at) VALUES (?, ?, ?)",
             (session_id, token, expires_at),
         )
     return DownloadSession(id=session_id, token=token, expires_at=parse_utc(expires_at))
+
+
+def reset_account_benefit(conn: sqlite3.Connection, account_id: str, benefit_id: str) -> None:
+    """デモ用に本人の特典を削除し、有効な取得権を同じURLのまま未使用に戻す。
+
+    再発行で無効にした取得権は無効のまま受取先だけを外す。他人の取得権には触れない。
+    呼び出し側でデモモードを確認する。
+    """
+    with transaction(conn):
+        if not account_can_access_benefit(conn, account_id, benefit_id):
+            raise BenefitNotFound("受け取った特典が見つかりません")
+        conn.execute(
+            "DELETE FROM repeatable_account_claims WHERE account_id = ? AND token IN "
+            "(SELECT token FROM entitlements WHERE benefit_id = ?)",
+            (account_id, benefit_id),
+        )
+        conn.execute(
+            "DELETE FROM download_sessions WHERE token IN "
+            "(SELECT token FROM entitlements WHERE account_id = ? AND benefit_id = ? "
+            "AND uid NOT IN (SELECT uid FROM repeatable_cards))",
+            (account_id, benefit_id),
+        )
+        conn.execute(
+            "UPDATE entitlements SET status = CASE WHEN status = 'account' THEN 'unused' ELSE status END, "
+            "account_id = NULL, claimed_at = NULL WHERE account_id = ? AND benefit_id = ?",
+            (account_id, benefit_id),
+        )
 
 
 # ---- 閲覧と権限の判定 ----
@@ -315,8 +363,11 @@ def view_state(
     account_owned はログイン中の本人が追加した場合だけ。download_retryable はこのトークンに
     一致する期限内の再試行セッションがある場合だけ。それ以外の受け取り済みは claimed とし、
     受け取り方法や他人のアカウントは区別しない。無効なトークンは EntitlementNotFound。
+    例外カードは常にunusedとして受取操作を表示する。
     """
     entitlement = get_public_entitlement(conn, token)
+    if is_repeatable_card(conn, entitlement.uid):
+        return "unused"
     if entitlement.status == "unused":
         return "unused"
     if entitlement.status == "account":
@@ -340,6 +391,7 @@ def authorize_retry(
     判定の順番：①無効なトークンは EntitlementNotFound（期限より先に判定）、
     ②セッションIDがない・存在しない・別のトークンのもの、またはトークンが download
     でなければ RetryForbidden、③期限切れ（期限の時刻ちょうどを含む）は RetryExpired。
+    例外カードは状態がdownloadでなくても、対象トークンと期限が一致するセッションを認可する。
     """
     entitlement = get_public_entitlement(conn, token)
     if not retry_session_id:
@@ -347,7 +399,9 @@ def authorize_retry(
     row = conn.execute(
         "SELECT * FROM download_sessions WHERE id = ?", (retry_session_id,),
     ).fetchone()
-    if row is None or row["token"] != token or entitlement.status != "download":
+    if row is None or row["token"] != token or (
+        entitlement.status != "download" and not is_repeatable_card(conn, entitlement.uid)
+    ):
         raise RetryForbidden("再試行セッションがこの取得権と一致しません")
     session = DownloadSession(id=row["id"], token=row["token"], expires_at=parse_utc(row["expires_at"]))
     if row["expires_at"] <= format_utc(now):
@@ -362,9 +416,12 @@ def account_benefit_ids(conn: sqlite3.Connection, account_id: str) -> list[str]:
     順番は、その特典を最初に受け取った日時の新しい順。同じ日時なら特典ID順。
     """
     rows = conn.execute(
-        "SELECT benefit_id FROM entitlements WHERE account_id = ? "
+        "SELECT benefit_id FROM ("
+        "SELECT benefit_id, claimed_at FROM entitlements WHERE account_id = ? "
+        "UNION ALL SELECT e.benefit_id, c.claimed_at FROM repeatable_account_claims c "
+        "JOIN entitlements e ON e.token = c.token WHERE c.account_id = ?) "
         "GROUP BY benefit_id ORDER BY MIN(claimed_at) DESC, benefit_id",
-        (account_id,),
+        (account_id, account_id),
     ).fetchall()
     return [row["benefit_id"] for row in rows]
 
@@ -372,8 +429,10 @@ def account_benefit_ids(conn: sqlite3.Connection, account_id: str) -> list[str]:
 def account_can_access_benefit(conn: sqlite3.Connection, account_id: str, benefit_id: str) -> bool:
     """アカウントが特典を受け取ったか。取得権の状態は見ない。"""
     row = conn.execute(
-        "SELECT 1 FROM entitlements WHERE account_id = ? AND benefit_id = ? LIMIT 1",
-        (account_id, benefit_id),
+        "SELECT 1 FROM entitlements WHERE account_id = ? AND benefit_id = ? "
+        "UNION ALL SELECT 1 FROM repeatable_account_claims c JOIN entitlements e ON e.token = c.token "
+        "WHERE c.account_id = ? AND e.benefit_id = ? LIMIT 1",
+        (account_id, benefit_id, account_id, benefit_id),
     ).fetchone()
     return row is not None
 
@@ -412,8 +471,10 @@ def get_file_for_account(conn: sqlite3.Connection, account_id: str, file_id: str
     """アカウントが受け取った特典のファイルを取得。所属する特典に権限がなければ FileNotFound。"""
     row = conn.execute(
         "SELECT f.* FROM benefit_files f WHERE f.id = ? AND EXISTS ("
-        "SELECT 1 FROM entitlements e WHERE e.account_id = ? AND e.benefit_id = f.benefit_id)",
-        (file_id, account_id),
+        "SELECT 1 FROM entitlements e WHERE e.account_id = ? AND e.benefit_id = f.benefit_id "
+        "UNION ALL SELECT 1 FROM repeatable_account_claims c JOIN entitlements e ON e.token = c.token "
+        "WHERE c.account_id = ? AND e.benefit_id = f.benefit_id)",
+        (file_id, account_id, account_id),
     ).fetchone()
     if row is None:
         raise FileNotFound(f"ファイルが見つかりません: {file_id}")

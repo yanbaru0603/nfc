@@ -29,6 +29,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isReceiveResponse(value: unknown): value is ReceiveResponse {
   return isRecord(value) &&
+    typeof value.repeatable === 'boolean' &&
     typeof value.state === 'string' &&
     ['unused', 'account_owned', 'download_retryable', 'claimed'].includes(value.state) &&
     isRecord(value.work) &&
@@ -162,6 +163,7 @@ function ReceiveContent({ token, attemptedTokens }: { token: string; attemptedTo
       )}
       {state.status === 'ready' && (
         <>
+          {state.data.repeatable && <Alert severity="info">このカードはデモ用です。何度でも特典を受け取れます</Alert>}
           <Typography variant="h6" component="h2">{state.data.work.title}</Typography>
           <Box
             component="img"
@@ -211,7 +213,7 @@ function ReceiveContent({ token, attemptedTokens }: { token: string; attemptedTo
                     disabled={busy}
                     onClick={() => { setActionError(false); setDialogOpen(true); }}
                   >
-                    登録せずに一回だけダウンロード
+                    {state.data.repeatable ? '登録せずにダウンロード' : '登録せずに一回だけダウンロード'}
                   </Button>
                   <Dialog
                     open={dialogOpen}
@@ -224,7 +226,9 @@ function ReceiveContent({ token, attemptedTokens }: { token: string; attemptedTo
                     <DialogTitle id={dialogTitleId}>登録せずにダウンロードしますか？</DialogTitle>
                     <DialogContent sx={{ overflowWrap: 'anywhere' }}>
                       <Stack id={dialogDescriptionId} spacing={2}>
-                        <Typography>登録せずに受け取ると、後からアカウントに追加できません。</Typography>
+                        <Typography>{state.data.repeatable
+                          ? '受け取った後も、同じカードから繰り返し受け取れます。'
+                          : '登録せずに受け取ると、後からアカウントに追加できません。'}</Typography>
                         <Typography>再ダウンロードは、同じブラウザで短時間に限られます。</Typography>
                       </Stack>
                     </DialogContent>

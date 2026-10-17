@@ -23,6 +23,7 @@ from backend.entitlements import (
     account_benefit_ids,
     account_can_access_benefit,
     activate_issued,
+    allow_repeat_for_uid,
     authorize_retry,
     claim_for_account,
     claim_for_download,
@@ -35,6 +36,7 @@ from backend.entitlements import (
     get_file_for_retry,
     get_public_entitlement,
     new_token,
+    reset_account_benefit,
     view_state,
 )
 
@@ -88,6 +90,99 @@ class EntitlementTestCase(unittest.TestCase):
     def view(self, token: str, *, account_id: str | None = None,
              session_id: str | None = None, now: datetime = NOW) -> str:
         return view_state(self.conn, token, account_id=account_id, retry_session_id=session_id, now=now)
+
+
+class RepeatableCardTest(EntitlementTestCase):
+    def enable(self, token: str = "t") -> None:
+        uid = get_public_entitlement(self.conn, token).uid
+        allow_repeat_for_uid(self.conn, uid)
+
+    def test_exception_is_persistent_and_scoped_to_one_uid(self) -> None:
+        self.insert("t")
+        self.insert("normal")
+        self.enable()
+        self.enable()
+        init_db(self.conn)
+        for account in ("alice", "alice", "bob"):
+            claim_for_account(self.conn, "t", account, now=NOW)
+            self.assertEqual(self.view("t", account_id=account), "unused")
+            self.assertTrue(account_can_access_benefit(self.conn, account, "benefit-1"))
+            self.assertEqual(account_benefit_ids(self.conn, account), ["benefit-1"])
+        self.assertEqual(self.status("t"), "unused")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM repeatable_account_claims").fetchone()[0], 2)
+        claim_for_account(self.conn, "normal", "alice", now=NOW)
+        with self.assertRaises(AlreadyClaimed):
+            claim_for_account(self.conn, "normal", "bob", now=NOW)
+
+    def test_repeat_downloads_keep_each_session_and_enforce_expiry(self) -> None:
+        self.insert("t")
+        self.enable()
+        first = claim_for_download(self.conn, "t", now=NOW, ttl_seconds=TTL)
+        second = claim_for_download(self.conn, "t", now=NOW + timedelta(seconds=TTL), ttl_seconds=TTL)
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(self.status("t"), "unused")
+        self.assertEqual(authorize_retry(self.conn, "t", first.id, now=NOW), first)
+        with self.assertRaises(RetryExpired):
+            authorize_retry(self.conn, "t", first.id, now=NOW + timedelta(seconds=TTL))
+        self.assertEqual(authorize_retry(self.conn, "t", second.id, now=NOW + timedelta(seconds=TTL)), second)
+        with self.assertRaises(RetryForbidden):
+            authorize_retry(self.conn, "t", None, now=NOW)
+        with self.assertRaises(RetryForbidden):
+            authorize_retry(self.conn, "t", "wrong-session", now=NOW)
+
+    def test_enabling_used_card_preserves_owner_and_allows_other_receivers(self) -> None:
+        self.insert("t")
+        claim_for_account(self.conn, "t", "alice", now=NOW)
+        self.enable()
+        claim_for_account(self.conn, "t", "bob", now=NOW)
+        session = claim_for_download(self.conn, "t", now=NOW, ttl_seconds=TTL)
+        self.assertEqual(authorize_retry(self.conn, "t", session.id, now=NOW), session)
+        self.assertTrue(account_can_access_benefit(self.conn, "alice", "benefit-1"))
+        self.assertTrue(account_can_access_benefit(self.conn, "bob", "benefit-1"))
+        self.assertEqual(self.status("t"), "account")
+
+    def test_reissue_preserves_exception_and_previous_libraries(self) -> None:
+        self.insert("t", uid="repeat-uid")
+        self.enable()
+        claim_for_account(self.conn, "t", "alice", now=NOW)
+        session = claim_for_download(self.conn, "t", now=NOW, ttl_seconds=TTL)
+        token = create_issuing(self.conn, uid="repeat-uid", benefit_id="benefit-1", now=NOW, reissue=True)
+        activate_issued(self.conn, token, reissue=True)
+        self.assertEqual(self.status("t"), "revoked")
+        with self.assertRaises(EntitlementNotFound):
+            claim_for_account(self.conn, "t", "bob", now=NOW)
+        with self.assertRaises(EntitlementNotFound):
+            authorize_retry(self.conn, "t", session.id, now=NOW)
+        claim_for_account(self.conn, token, "bob", now=NOW)
+        claim_for_account(self.conn, token, "alice", now=NOW)
+        self.assertTrue(account_can_access_benefit(self.conn, "alice", "benefit-1"))
+        self.assertTrue(account_can_access_benefit(self.conn, "bob", "benefit-1"))
+
+    def test_reset_removes_only_one_accounts_claim_and_preserves_downloads(self) -> None:
+        self.insert("t")
+        claim_for_account(self.conn, "t", "alice", now=NOW)
+        self.enable()
+        for account in ("alice", "bob"):
+            claim_for_account(self.conn, "t", account, now=NOW)
+        session = claim_for_download(self.conn, "t", now=NOW, ttl_seconds=TTL)
+        reset_account_benefit(self.conn, "alice", "benefit-1")
+        self.assertFalse(account_can_access_benefit(self.conn, "alice", "benefit-1"))
+        self.assertTrue(account_can_access_benefit(self.conn, "bob", "benefit-1"))
+        self.assertEqual(authorize_retry(self.conn, "t", session.id, now=NOW), session)
+        claim_for_account(self.conn, "t", "alice", now=NOW)
+        self.assertTrue(account_can_access_benefit(self.conn, "alice", "benefit-1"))
+
+    def test_download_session_failure_does_not_change_existing_grants(self) -> None:
+        self.insert("t")
+        self.enable()
+        claim_for_account(self.conn, "t", "alice", now=NOW)
+        self.conn.execute("CREATE TEMP TRIGGER fail_repeat_session BEFORE INSERT ON download_sessions "
+                          "BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        with self.assertRaises(sqlite3.IntegrityError):
+            claim_for_download(self.conn, "t", now=NOW, ttl_seconds=TTL)
+        self.assertEqual(self.status("t"), "unused")
+        self.assertEqual(self.session_count(), 0)
+        self.assertTrue(account_can_access_benefit(self.conn, "alice", "benefit-1"))
 
 
 class ClaimTest(EntitlementTestCase):

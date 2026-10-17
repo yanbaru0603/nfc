@@ -24,6 +24,7 @@ from backend.entitlements import (
     get_benefit_for_account,
     get_file_for_account,
     get_public_entitlement,
+    reset_account_benefit,
 )
 from backend.files import (
     ArchiveItem,
@@ -103,6 +104,7 @@ class LibraryBenefitOut(BaseModel):
     work: WorkOut
     benefit: BenefitOut
     files: list[BenefitFileOut]  # position順。
+    demo_reset_enabled: bool
 
 
 # ---- エラー ----
@@ -236,13 +238,32 @@ def get_library_file(
 @router.get("/library/{benefit_id}", response_model=LibraryBenefitOut)
 def get_library_benefit(
     detail: Annotated[BenefitDetail, Depends(_require_benefit)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> LibraryBenefitOut:
     """再生一覧に表示する作品・特典・ファイル一覧。"""
     return LibraryBenefitOut(
         work=WorkOut.model_validate(detail.work),
         benefit=BenefitOut.model_validate(detail.benefit),
         files=[BenefitFileOut.model_validate(file) for file in detail.files],
+        demo_reset_enabled=settings.demo_mode,
     )
+
+
+@router.post("/library/{benefit_id}/reset", status_code=204)
+def reset_library_benefit(
+    benefit_id: str,
+    conn: Annotated[sqlite3.Connection, Depends(get_conn)],
+    account: Annotated[Account, Depends(require_account)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    """デモモードでのみ、本人の特典を削除して同じタグからの受取をやり直す。"""
+    if not settings.demo_mode:
+        raise ApiError(403, "demo_disabled", "デモ用の削除は無効です")
+    try:
+        reset_account_benefit(conn, account.id, benefit_id)
+    except BenefitNotFound:
+        raise _benefit_not_found() from None
+    return Response(status_code=204)
 
 
 @router.get("/library/{benefit_id}/archive")

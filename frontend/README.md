@@ -80,6 +80,8 @@ POSTの成功応答がJSONオブジェクトで、文字列の `csrf_token` を�
 
 `src/components/PlaybackList.tsx` は、ライブラリとダウンロードページで共通の再生一覧（spec.mdの6.5）とする。曲の再生URLを返す `fileUrl(file)` とZIPの `archiveUrl` を受け取る。ZIPはdownload属性のない通常の `<a href>` で開き、iPhoneでの保存方法を近くに案内する。画面下部に `<audio controls>` を1つだけ置き、曲を選ぶとsrcを切り替える。曲が終わると次の曲に進み、最後の曲で止まる。audioの `error` で「再生できませんでした」を表示し、`onPlaybackError` で親に知らせる。
 
+ライブラリの再生一覧では、APIの `demo_reset_enabled` がtrueの場合だけ、確認ダイアログ付きのデモ用削除ボタンを表示する。操作と削除範囲の正本は [spec.mdのデモ用の削除と再受取](../spec.md#デモ用の削除と再受取) とする。
+
 ## ダウンロードページ
 
 `/r/:token/download` は `GET /api/r/<token>/download` を取得し、再生一覧と再ダウンロードの残り時間を表示する。残り時間は応答の `remaining_seconds` と取得後の経過時間（`performance.now()`）から計算し、端末の時計は使わない。0になると期限切れの表示に切り替える。410は期限切れ、403は受け取ったブラウザで開くよう案内し、どちらにも特典ページへのリンクを添える。404は「この特典は見つかりません」とする。再生に失敗したときは一覧を取り直し、410なら期限切れに切り替える。

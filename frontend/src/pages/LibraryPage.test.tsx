@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryBenefitResponse } from '../api/types';
+import { getSession } from '../api/client';
 import { LibraryBenefitPage } from './LibraryBenefitPage';
 import { LibraryPage } from './LibraryPage';
 
@@ -13,6 +14,7 @@ const detail: LibraryBenefitResponse = {
   work,
   benefit,
   files: [{ id: 'file 1', position: 1, title: '夜の手紙', mime_type: 'audio/mpeg' }],
+  demo_reset_enabled: false,
 };
 
 beforeEach(() => {
@@ -80,6 +82,59 @@ describe('ライブラリ', () => {
 });
 
 describe('特典の再生一覧', () => {
+  it('通常モードではデモ用の削除を表示しない', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json(detail));
+    renderAt('/library/benefit-001');
+    await screen.findByRole('heading', { name: work.title });
+    expect(screen.queryByRole('button', { name: /特典を削除/ })).not.toBeInTheDocument();
+  });
+
+  it('デモ用の削除をキャンセルするとPOSTしない', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ ...detail, demo_reset_enabled: true }));
+    const user = userEvent.setup();
+    renderAt('/library/benefit-001');
+    await user.click(await screen.findByRole('button', { name: /特典を削除/ }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('同じタグをもう一度かざすと追加できます');
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('削除の確定中は二重送信を防ぎ、成功したらライブラリへ戻る', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ account: null, csrf_token: 'reset-csrf' }));
+    await getSession({ force: true });
+    let finishReset!: (response: Response) => void;
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ ...detail, demo_reset_enabled: true }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishReset = resolve; }))
+      .mockResolvedValueOnce(Response.json({ items: [] }));
+    const user = userEvent.setup();
+    renderAt('/library/benefit-001');
+    await user.click(await screen.findByRole('button', { name: /特典を削除/ }));
+    await user.click(screen.getByRole('button', { name: '削除する' }));
+    expect(screen.getByRole('button', { name: '削除する' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'キャンセル' })).toBeDisabled();
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/library/benefit-001/reset', expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'X-CSRF-Token': 'reset-csrf' }),
+    }));
+    await act(async () => { finishReset(new Response(null, { status: 204 })); });
+    expect(await screen.findByText('まだ特典がありません')).toBeInTheDocument();
+  });
+
+  it('削除の通信失敗は自動再送せず、確認方法を案内する', async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ account: null, csrf_token: 'reset-csrf' }));
+    await getSession({ force: true });
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ ...detail, demo_reset_enabled: true }))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderAt('/library/benefit-001');
+    await user.click(await screen.findByRole('button', { name: /特典を削除/ }));
+    await user.click(screen.getByRole('button', { name: '削除する' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('ライブラリに戻って特典が残っているか確認');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('IDをエンコードして取得し、再生・ZIPのURLと戻るリンクを表示する', async () => {
     fetchMock.mockResolvedValueOnce(Response.json(detail));
     const user = userEvent.setup();

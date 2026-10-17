@@ -20,6 +20,7 @@ class Settings:
     session_secret: str  # セッションCookieの署名に使う秘密鍵。
     retry_ttl_seconds: int  # 登録なしで受け取った後の再試行期限（秒）。
     cookie_secure: bool  # HTTPSだけでCookieを送るSecure属性の有効・無効。
+    demo_mode: bool = False  # デモ用の特典削除と取得権のリセットを許可する。
 
 
 def _resolve_path(value: str) -> Path:
@@ -76,6 +77,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     else:
         raise ValueError("COOKIE_SECURE は true または false を指定してください")
 
+    demo_value = values.get("DEMO_MODE", "false").strip().lower()
+    if demo_value not in {"1", "true", "yes", "on", "0", "false", "no", "off"}:
+        raise ValueError("DEMO_MODE は true または false を指定してください")
+
     # SESSION_SECRETが未設定または空文字なら、ファイルに保存した鍵を使う。
     session_secret = values.get("SESSION_SECRET") or _load_session_secret()
     return Settings(
@@ -85,4 +90,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         session_secret=session_secret,
         retry_ttl_seconds=retry_ttl_seconds,
         cookie_secure=cookie_secure,
+        demo_mode=demo_value in {"1", "true", "yes", "on"},
     )

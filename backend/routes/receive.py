@@ -25,6 +25,7 @@ from backend.entitlements import (
     get_benefit_detail,
     get_file_for_retry,
     get_public_entitlement,
+    is_repeatable_card,
     view_state,
 )
 from backend.files import (
@@ -96,6 +97,7 @@ def get_receive(
     detail = get_benefit_detail(conn, entitlement.benefit_id)
     return ReceiveOut(
         state=state,
+        repeatable=is_repeatable_card(conn, entitlement.uid),
         work=WorkOut.model_validate(detail.work),
         benefit=BenefitOut.model_validate(detail.benefit),
         files=[BenefitFileOut.model_validate(file) for file in detail.files],

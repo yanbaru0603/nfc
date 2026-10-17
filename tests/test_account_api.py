@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.db import connect, format_utc
+from backend.entitlements import allow_repeat_for_uid
 from backend.main import create_app
 from backend.routes.account import SESSION_RETURN_TO_KEY
 from seed import DEV_TOKENS, seed
@@ -23,7 +25,7 @@ from seed import DEV_TOKENS, seed
 NOW = datetime(2026, 10, 17, 1, 0, 0, tzinfo=UTC)
 TOKEN = DEV_TOKENS[0]
 
-EXPECTED_WORK = {"id": "work-001", "title": "星めぐりの物語", "cover_path": "/covers/work-001.svg"}
+EXPECTED_WORK = {"id": "work-001", "title": "星めぐりの物語", "cover_path": "/covers/work-001.jpg"}
 EXPECTED_BENEFIT = {"id": "benefit-001", "title": "特装版CD 特典音源", "description": "デモ用に生成した3曲の単音音源"}
 
 
@@ -183,7 +185,8 @@ class AccountApiTest(unittest.TestCase):
         detail = self.client.get("/api/library/benefit-001")
         self.assertEqual(detail.status_code, 200)
         body = detail.json()
-        self.assertEqual(set(body), {"work", "benefit", "files"})
+        self.assertEqual(set(body), {"work", "benefit", "files", "demo_reset_enabled"})
+        self.assertFalse(body["demo_reset_enabled"])
         self.assertEqual([file["id"] for file in body["files"]], ["file-001", "file-002", "file-003"])
         self.assertNotIn("file_path", detail.text)
         self.assertNotIn(".wav", detail.text)
@@ -196,6 +199,122 @@ class AccountApiTest(unittest.TestCase):
         self.assert_error(self.client.get("/api/library/benefit-001/archive"), 404, "benefit_not_found")
         self.assert_error(self.client.get("/api/library/missing"), 404, "benefit_not_found")
         self.assert_error(self.client.get("/api/library/files/file-001"), 404, "file_not_found")
+
+    # ---- デモ用の削除と再受取 ----
+
+    def enable_demo(self) -> None:
+        self.app.state.settings = replace(self.settings, demo_mode=True)
+
+    def test_reset_is_disabled_by_default(self) -> None:
+        self.claim_for_account(TOKEN, "demo-alice")
+        self.login(self.client, "demo-alice")
+        self.assert_error(self.post(self.client, "/api/library/benefit-001/reset"), 403, "demo_disabled")
+        self.assertEqual(self.client.get(f"/api/r/{TOKEN}").json()["state"], "account_owned")
+
+    def test_repeatable_card_supports_multiple_accounts_and_anonymous_downloads(self) -> None:
+        with self.db() as conn:
+            allow_repeat_for_uid(conn, "DEV-0001")
+        self.login(self.client, "demo-alice")
+        bob = self.enter_client()
+        self.login(bob, "demo-bob")
+        anonymous = self.enter_client()
+        for client in (self.client, self.client, bob, bob):
+            self.assertTrue(client.get(f"/api/r/{TOKEN}").json()["repeatable"])
+            self.assertEqual(self.post(client, f"/api/r/{TOKEN}/claim/account").status_code, 200)
+            self.assertEqual(client.get(f"/api/r/{TOKEN}").json()["state"], "unused")
+            self.assertEqual(len(client.get("/api/library").json()["items"]), 1)
+            self.assertEqual(client.get("/api/library/files/file-001").status_code, 200)
+        for _ in range(2):
+            self.assertEqual(self.post(anonymous, f"/api/r/{TOKEN}/claim/download").status_code, 200)
+            self.assertEqual(anonymous.get(f"/api/r/{TOKEN}/archive").status_code, 200)
+        self.assertFalse(anonymous.get(f"/api/r/{DEV_TOKENS[1]}").json()["repeatable"])
+        self.assertEqual(self.post(self.client, f"/api/r/{DEV_TOKENS[1]}/claim/account").status_code, 200)
+        self.assert_error(self.post(bob, f"/api/r/{DEV_TOKENS[1]}/claim/account"), 409, "already_claimed")
+        self.enable_demo()
+        self.assertEqual(self.post(self.client, "/api/library/benefit-001/reset").status_code, 204)
+        self.assertEqual(self.client.get("/api/library").json()["items"], [])
+        self.assertEqual(len(bob.get("/api/library").json()["items"]), 1)
+        self.assertEqual(anonymous.get(f"/api/r/{TOKEN}/archive").status_code, 200)
+        self.assertEqual(self.post(self.client, f"/api/r/{TOKEN}/claim/account").status_code, 200)
+
+    def test_reset_allows_claiming_the_same_url_again(self) -> None:
+        self.enable_demo()
+        self.login(self.client, "demo-alice")
+        self.assertEqual(self.post(self.client, f"/api/r/{TOKEN}/claim/account").status_code, 200)
+        self.assertTrue(self.client.get("/api/library/benefit-001").json()["demo_reset_enabled"])
+        response = self.post(self.client, "/api/library/benefit-001/reset")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(self.client.get("/api/library").json(), {"items": []})
+        self.assertEqual(self.client.get(f"/api/r/{TOKEN}").json()["state"], "unused")
+        self.assert_error(self.client.get("/api/library/files/file-001"), 404, "file_not_found")
+        self.assert_error(self.client.get("/api/library/benefit-001/archive"), 404, "benefit_not_found")
+        self.assert_error(self.post(self.client, "/api/library/benefit-001/reset"), 404, "benefit_not_found")
+        self.login(self.client, "demo-bob")
+        self.assertEqual(self.post(self.client, f"/api/r/{TOKEN}/claim/account").status_code, 200)
+        self.assertEqual(len(self.client.get("/api/library").json()["items"]), 1)
+
+    def test_reset_requires_login_ownership_and_csrf(self) -> None:
+        self.enable_demo()
+        self.claim_for_account(TOKEN, "demo-alice")
+        path = "/api/library/benefit-001/reset"
+        self.assert_error(self.post(self.client, path), 401, "login_required")
+        self.login(self.client, "demo-bob")
+        self.assert_error(self.post(self.client, path), 404, "benefit_not_found")
+        self.assert_error(self.post(self.client, "/api/library/missing/reset"), 404, "benefit_not_found")
+        self.login(self.client, "demo-alice")
+        self.assert_error(self.client.post(path), 403, "csrf_invalid")
+        self.assertEqual(self.client.get(f"/api/r/{TOKEN}").json()["state"], "account_owned")
+
+    def test_reset_preserves_revocation_other_accounts_and_other_benefits(self) -> None:
+        self.enable_demo()
+        self.claim_for_account(TOKEN, "demo-alice")
+        self.execute("UPDATE entitlements SET status = 'revoked' WHERE token = ?", (TOKEN,))
+        self.add_entitlement("new-for-bob", "benefit-001", "account", "demo-bob", NOW)
+        self.execute("UPDATE entitlements SET uid = 'DEV-0001' WHERE token = 'new-for-bob'")
+        self.claim_for_account(DEV_TOKENS[1], "demo-alice")
+        self.execute("INSERT INTO download_sessions VALUES ('old-session', ?, ?)",
+                     (DEV_TOKENS[1], format_utc(NOW)))
+        self.assertEqual(self.post(self.client, f"/api/r/{DEV_TOKENS[2]}/claim/download").status_code, 200)
+        self.add_benefit("benefit-002", "特典2")
+        self.add_entitlement("other-benefit", "benefit-002", "account", "demo-alice", NOW)
+        self.login(self.client, "demo-alice")
+        self.assertEqual(self.post(self.client, "/api/library/benefit-001/reset").status_code, 204)
+        with self.db() as conn:
+            revoked = conn.execute("SELECT * FROM entitlements WHERE token = ?", (TOKEN,)).fetchone()
+            self.assertEqual(revoked["status"], "revoked")
+            self.assertIsNone(revoked["account_id"])
+            self.assertIsNone(revoked["claimed_at"])
+            active = conn.execute("SELECT * FROM entitlements WHERE token = ?", (DEV_TOKENS[1],)).fetchone()
+            self.assertEqual(active["status"], "unused")
+            self.assertIsNone(active["account_id"])
+            self.assertIsNone(active["claimed_at"])
+            bob = conn.execute("SELECT * FROM entitlements WHERE token = 'new-for-bob'").fetchone()
+            self.assertEqual((bob["status"], bob["account_id"]), ("account", "demo-bob"))
+            self.assertIsNotNone(bob["claimed_at"])
+            sessions = conn.execute("SELECT token FROM download_sessions").fetchall()
+            self.assertEqual([row["token"] for row in sessions], [DEV_TOKENS[2]])
+        self.assertEqual(self.client.get(f"/api/r/{DEV_TOKENS[1]}").json()["state"], "unused")
+        self.assert_error(self.client.get(f"/api/r/{TOKEN}"), 404, "entitlement_not_found")
+        self.assertEqual(self.client.get(f"/api/r/{DEV_TOKENS[2]}/download").status_code, 200)
+        self.assertEqual([item["benefit"]["id"] for item in self.client.get("/api/library").json()["items"]],
+                         ["benefit-002"])
+
+    def test_reset_rolls_back_if_updating_entitlements_fails(self) -> None:
+        self.enable_demo()
+        self.claim_for_account(TOKEN, "demo-alice")
+        self.execute("INSERT INTO download_sessions VALUES ('old-session', ?, ?)", (TOKEN, format_utc(NOW)))
+        self.execute("CREATE TRIGGER fail_reset BEFORE UPDATE ON entitlements "
+                     "BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        self.login(self.client, "demo-alice")
+        with self.assertLogs("backend.main", level="ERROR"):
+            response = self.post(self.client, "/api/library/benefit-001/reset")
+        self.assert_error(response, 500, "internal_error")
+        with self.db() as conn:
+            row = conn.execute("SELECT * FROM entitlements WHERE token = ?", (TOKEN,)).fetchone()
+            self.assertEqual((row["status"], row["account_id"]), ("account", "demo-alice"))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM download_sessions").fetchone()[0], 1)
 
     # ---- ファイル ----
 
@@ -225,7 +344,7 @@ class AccountApiTest(unittest.TestCase):
         self.assertIn('filename="benefit.zip"', disposition)
         self.assertIn("filename*=UTF-8''" + quote("星めぐりの物語_特装版CD 特典音源.zip", safe=""), disposition)
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            self.assertEqual(archive.namelist(), ["01_朝の光.wav", "02_風の便り.wav", "03_星の帰り道.wav"])
+            self.assertEqual(archive.namelist(), ["01_奥多摩の空.wav", "02_ビールを注ぐ音.wav", "03_出来立てビール.wav"])
             self.assertTrue(all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist()))
 
     def test_missing_media_file_returns_file_not_found(self) -> None:

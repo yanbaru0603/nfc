@@ -221,11 +221,11 @@ class ClaimApiTest(unittest.TestCase):
         self.assertIn('filename="benefit.zip"', disposition)
         self.assertIn("星めぐりの物語_特装版CD 特典音源.zip", disposition)
         with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:
-            self.assertEqual(zipped.namelist(), ["01_朝の光.wav", "02_風の便り.wav", "03_星の帰り道.wav"])
+            self.assertEqual(zipped.namelist(), ["01_奥多摩の空.wav", "02_ビールを注ぐ音.wav", "03_出来立てビール.wav"])
             for item in zipped.infolist():
                 self.assertEqual(item.compress_type, zipfile.ZIP_STORED)
                 self.assertTrue(item.flag_bits & 0x800)
-            self.assertEqual(zipped.read("01_朝の光.wav"), audio_bytes)
+            self.assertEqual(zipped.read("01_奥多摩の空.wav"), audio_bytes)
         for response in (listing, audio, archive):
             self.assertEqual(response.headers["Cache-Control"], "no-store")
             self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")

@@ -52,6 +52,7 @@ export type DemoAccountsResponse = {
 
 export type ReceiveResponse = {
   state: BenefitDisplayState;
+  repeatable: boolean;
   work: Work;
   benefit: Benefit;
   files: BenefitFile[];
@@ -90,4 +91,5 @@ export type LibraryBenefitResponse = {
   work: Work;
   benefit: Benefit;
   files: BenefitFile[];
+  demo_reset_enabled: boolean;
 };

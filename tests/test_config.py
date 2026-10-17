@@ -32,6 +32,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.base_url, "http://localhost:5173")
         self.assertEqual(settings.retry_ttl_seconds, 600)
         self.assertFalse(settings.cookie_secure)
+        self.assertFalse(settings.demo_mode)
         with self.assertRaises(FrozenInstanceError):
             settings.base_url = "https://example.test"
 
@@ -116,6 +117,16 @@ class ConfigTest(unittest.TestCase):
         for value in ("0", "-1", "1.5", "abc", ""):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "RETRY_TTL_SECONDS"):
                 load_settings({"RETRY_TTL_SECONDS": value, "SESSION_SECRET": "test-secret"})
+
+    def test_demo_mode_override_and_validation(self) -> None:
+        for value, expected in (("true", True), ("1", True), (" ON ", True),
+                                ("false", False), ("0", False), ("NO", False)):
+            with self.subTest(value=value):
+                self.assertEqual(load_settings({
+                    "DEMO_MODE": value, "SESSION_SECRET": "test-secret",
+                }).demo_mode, expected)
+        with self.assertRaisesRegex(ValueError, "DEMO_MODE"):
+            load_settings({"DEMO_MODE": "invalid", "SESSION_SECRET": "test-secret"})
 
     def test_secret_is_persisted_with_private_permissions(self) -> None:
         first = load_settings({})

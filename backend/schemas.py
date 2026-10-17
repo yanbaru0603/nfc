@@ -78,6 +78,7 @@ class ReceiveOut(BaseModel):
     """
 
     state: ViewState
+    repeatable: bool = False
     work: WorkOut
     benefit: BenefitOut
     files: list[BenefitFileOut]  # position順。

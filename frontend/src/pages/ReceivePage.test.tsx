@@ -14,6 +14,7 @@ const fetchMock = vi.fn<typeof fetch>();
 const account = { id: 'demo-1', name: 'デモ太郎' };
 const receive: ReceiveResponse = {
   state: 'unused',
+  repeatable: false,
   work: { id: 'work-001', title: '星の手紙', cover_path: '/covers/work-001.svg' },
   benefit: { id: 'benefit-001', title: '特典音源', description: 'グッズ限定の二曲です。' },
   files: [
@@ -65,6 +66,16 @@ async function renderReady() {
 }
 
 describe('特典情報と状態別の表示', () => {
+  it('例外カードでは繰り返し受取を案内し、一回きりの注意を表示しない', async () => {
+    respond({ ...receive, repeatable: true });
+    const user = userEvent.setup();
+    await renderReady();
+    expect(screen.getByRole('alert')).toHaveTextContent('何度でも特典を受け取れます');
+    await user.click(screen.getByRole('button', { name: '登録せずにダウンロード' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('同じカードから繰り返し受け取れます');
+    expect(screen.queryByText('登録せずに受け取ると、後からアカウントに追加できません。')).not.toBeInTheDocument();
+  });
+
   it.each(['unused', 'account_owned', 'download_retryable', 'claimed'] as const)(
     '%sでも作品名・表紙・特典名・説明・曲一覧を表示する', async (state) => {
       respond({ ...receive, state });

@@ -56,6 +56,7 @@ describe('画面ルーティング', () => {
     fetchMock.mockImplementation(async (path) => path === '/api/r/demo-token'
       ? Response.json({
         state: 'claimed',
+        repeatable: false,
         work: { id: 'work-001', title: '星の手紙', cover_path: '/covers/work-001.svg' },
         benefit: { id: 'benefit-001', title: '特典音源', description: 'グッズ限定の音源です。' },
         files: [],
@@ -171,7 +172,7 @@ describe('ログイン・受取とセッション更新の接続', () => {
       if (path === '/api/session') return Response.json({
         account: loggedIn ? account : null, csrf_token: loggedIn ? 'csrf-refreshed' : 'csrf-anonymous',
       });
-      if (path === '/api/r/demo-token') return Response.json({ state: 'unused', work, benefit, files: [] });
+      if (path === '/api/r/demo-token') return Response.json({ state: 'unused', repeatable: false, work, benefit, files: [] });
       if (path === '/api/auth/prepare') return Response.json({ return_to: '/r/demo-token' });
       if (path === '/api/auth/accounts') return Response.json({ accounts: [account] });
       if (path === '/api/auth/login') {

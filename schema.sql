@@ -51,3 +51,19 @@ CREATE TABLE IF NOT EXISTS download_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS download_sessions_token ON download_sessions(token);
+
+-- ローカルCLIで例外登録した物理カード。同じUIDの再発行後も適用する
+CREATE TABLE IF NOT EXISTS repeatable_cards (
+    uid TEXT PRIMARY KEY
+);
+
+-- 例外カードからは複数のアカウントが受け取れるため、受取先を別に保存する
+CREATE TABLE IF NOT EXISTS repeatable_account_claims (
+    token      TEXT NOT NULL REFERENCES entitlements(token),
+    account_id TEXT NOT NULL REFERENCES accounts(id),
+    claimed_at TEXT NOT NULL,
+    PRIMARY KEY (token, account_id)
+);
+
+CREATE INDEX IF NOT EXISTS repeatable_account_claims_account
+    ON repeatable_account_claims(account_id);

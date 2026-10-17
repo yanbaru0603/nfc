@@ -11,7 +11,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
-from xml.etree import ElementTree
 
 from backend.config import PROJECT_ROOT, Settings
 from backend.db import connect, init_db
@@ -31,9 +30,9 @@ class SeedTest(unittest.TestCase):
             retry_ttl_seconds=600,
             cookie_secure=True,
         )
-        self.cover_path = self.root / "frontend/public/covers/work-001.svg"
+        self.cover_path = self.root / "frontend/public/covers/work-001.jpg"
         self.cover_path.parent.mkdir(parents=True)
-        shutil.copyfile(PROJECT_ROOT / "frontend/public/covers/work-001.svg", self.cover_path)
+        shutil.copyfile(PROJECT_ROOT / "frontend/public/covers/work-001.jpg", self.cover_path)
         self.root_patch = patch("seed.PROJECT_ROOT", self.root)
         self.root_patch.start()
         self.addCleanup(self.root_patch.stop)
@@ -122,7 +121,7 @@ class SeedTest(unittest.TestCase):
         frames: list[bytes] = []
         rows = self.conn.execute("SELECT * FROM benefit_files ORDER BY position").fetchall()
         self.assertEqual([row["position"] for row in rows], [1, 2, 3])
-        self.assertEqual([row["title"] for row in rows], ["朝の光", "風の便り", "星の帰り道"])
+        self.assertEqual([row["title"] for row in rows], ["奥多摩の空", "ビールを注ぐ音", "出来立てビール"])
         for row in rows:
             relative_path = Path(row["file_path"])
             self.assertFalse(relative_path.is_absolute())
@@ -177,17 +176,16 @@ class SeedTest(unittest.TestCase):
         replace.assert_called_once()
         self.assertEqual(list(path.parent.iterdir()), [path])
 
-    def test_cover_is_svg_and_uses_public_url(self) -> None:
+    def test_cover_is_jpeg_and_uses_public_url(self) -> None:
         before = self.cover_path.read_bytes()
         errors = io.StringIO()
         with redirect_stderr(errors):
             self.seed_data()
         self.assertEqual(errors.getvalue(), "")
         self.assertEqual(self.cover_path.read_bytes(), before)
-        cover = ElementTree.parse(self.cover_path)
-        self.assertEqual(cover.getroot().tag, "{http://www.w3.org/2000/svg}svg")
+        self.assertEqual(before[:3], b"\xff\xd8\xff")
         self.assertEqual(self.conn.execute("SELECT cover_path FROM works").fetchone()[0],
-                         "/covers/work-001.svg")
+                         "/covers/work-001.jpg")
 
     def test_missing_cover_warns_on_stderr_without_generating_a_file(self) -> None:
         shutil.rmtree(self.cover_path.parent)
