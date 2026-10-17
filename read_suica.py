@@ -39,7 +39,7 @@ def main() -> int:
         # 仮想環境内のlibusbを使用。Homebrewへの追加インストールは不要。
         library_path = libusb_package.get_library_path()
         if library_path is None:
-            print("libusbが見つかりません。requirements.txtを再インストールしてください",
+            print("libusbが見つかりません。poetry syncで依存ライブラリを再インストールしてください",
                   file=sys.stderr)
             return 1
         usb1.loadLibrary(ctypes.CDLL(str(library_path)))

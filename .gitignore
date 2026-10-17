@@ -2,4 +2,12 @@
 __pycache__/
 *.pyc
 
+# 実行時に生成するDB・セッション鍵・音源
+instance/
+media/
+
+# フロントエンド
+frontend/node_modules/
+frontend/dist/
+
 .codex/*

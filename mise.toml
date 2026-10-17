@@ -1,0 +1,5 @@
+[tools]
+python = "3.14"
+poetry = "2"
+node = "26"
+pnpm = "11"

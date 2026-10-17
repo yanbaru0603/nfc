@@ -1,0 +1,21 @@
+[project]
+name = "nfc-benefit-poc"
+version = "0.1.0"
+description = "NFCグッズから特装版の特典音源を受け取るPoC"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "nfcpy==1.0.4",
+    "libusb1==3.4.0",
+    "libusb-package==1.0.30.0",
+    "fastapi==0.143.3",
+    "uvicorn==0.54.0",
+    "itsdangerous==2.2.0",
+]
+
+[tool.poetry]
+package-mode = false
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+]

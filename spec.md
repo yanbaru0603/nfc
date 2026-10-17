@@ -49,7 +49,7 @@ PoCでは、この「入口としてのメディア」が実際に使えるこ�
 | 発行ツール | Python CLI。nfcpyでRC-S380を操作する |
 | DB | SQLite。Python標準のsqlite3を使い、発行ツールとバックエンドで同じファイルを参照する |
 | 特典ファイル | サーバーのローカルディレクトリに置く。フロントエンドのpublicや公開ディレクトリには置かない |
-| 実行環境 | バックエンドと発行ツールは同じMac・Python仮想環境。フロントエンドの開発・ビルドにはNode.jsを使う |
+| 実行環境 | Python・Poetry・Node.js・pnpmのバージョンはmiseで固定する。バックエンドと発行ツールは同じMac上の、Poetryで管理する仮想環境（`.venv`）で動かす。フロントエンドの開発・ビルドにはNode.jsとpnpmを使う |
 
 画面はMUIのコンポーネントで組み立て、API通信は標準のfetchを使う。PoCではReactのstateとContextで必要な状態を管理する。取得権・期限・ファイル取得の可否は必ずバックエンドが判断する。
 
@@ -455,7 +455,10 @@ Pythonのsqlite3は既定で暗黙にトランザクションを開始するた�
 nfc/
 ├── odai.md
 ├── spec.md
-├── requirements.txt         Python依存関係
+├── mise.toml                Python・Poetry・Node.js・pnpmのバージョン
+├── pyproject.toml           Python依存関係（Poetry）
+├── poetry.lock
+├── poetry.toml              仮想環境をプロジェクト内の .venv に作る設定
 ├── issue.py                 発行CLIの入口
 ├── seed.py                  初期データ・開発用取得権の登録
 ├── schema.sql
@@ -476,9 +479,8 @@ nfc/
 │       ├── receive.py       特典情報・受取確定・登録なしダウンロード
 │       └── account.py       セッション・デモログイン・ライブラリ
 ├── frontend/
-│   ├── .nvmrc               Node.jsのバージョン
 │   ├── package.json
-│   ├── package-lock.json
+│   ├── pnpm-lock.yaml
 │   ├── index.html
 │   ├── vite.config.ts       開発時のAPIプロキシ
 │   ├── tsconfig.json
@@ -501,11 +503,20 @@ nfc/
 
 発行CLIは `issuer/` のNFC機器操作と、`backend/` の設定・DB・取得権の共通処理を使う。`backend/` からは `issuer/` やnfcpyを読み込まず、Webサーバーの起動にRC-S380を必要としないようにする。
 
-Node.jsのバージョンは、開発に使うMacにインストール済みのv26系とし、`frontend/.nvmrc` と `package.json` の `engines` に記載する。
+ランタイムのバージョンはルートの `mise.toml` で固定する（Python 3.14、Poetry 2、Node.js 26、pnpm 11）。`package.json` の `engines` と `packageManager` にも同じバージョンを記載する。
 
-`requirements.txt` には、既存のnfcpy関連に加えて、`fastapi`、`uvicorn`、`itsdangerous`（SessionMiddlewareに必要）、`httpx`（TestClientに必要）をバージョン固定で追加する。
+Pythonの依存関係は `pyproject.toml` で管理し、バージョンを固定する。既存のnfcpy関連に加えて、`fastapi`、`uvicorn`、`itsdangerous`（SessionMiddlewareに必要）を通常の依存、`httpx`（TestClientに必要）を開発用の依存とする。
 
-`spec.md`、`odai.md`、`read_suica.py`、既存のPython依存関係は、この `nfc/` フォルダに置く。上記のうちフロントエンド・バックエンドなどの未作成部分は、実装開始時に用意する。既存の `read_suica.py` はRC-S380の動作確認用として残す。
+環境の作成とコマンドの実行は次のとおり。
+
+```sh
+mise install
+mise exec -- poetry sync              # Pythonの依存関係
+mise exec -- pnpm -C frontend install # フロントエンドの依存関係
+.venv/bin/python -m unittest -v       # バックエンドのテスト
+```
+
+`spec.md`、`odai.md`、`read_suica.py` は、この `nfc/` フォルダに置く。上記のうちフロントエンド・バックエンドなどの未作成部分は、実装開始時に用意する。既存の `read_suica.py` はRC-S380の動作確認用として残す。
 
 ## 11. テスト
 

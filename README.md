@@ -24,12 +24,12 @@ IDmはカードの識別子で、券面のSuica番号とは異なります。
 
 ## 環境の再作成
 
-既存のPython 3.14で実機の読み取りを確認済みです。依存ライブラリは`.venv`内にインストールします。
+PythonとPoetryのバージョンは`mise.toml`で固定しています。依存ライブラリはPoetryで`.venv`内にインストールします。
 `libusb-package`に含まれるUSBライブラリを使うため、Homebrewへの追加は不要です。
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+mise install
+mise exec -- poetry sync
 ```
 
 ## 確認
