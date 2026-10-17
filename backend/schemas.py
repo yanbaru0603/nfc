@@ -5,8 +5,10 @@
 
 from collections.abc import Mapping
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from starlette.responses import JSONResponse
+
+from backend.entitlements import ViewState
 
 
 class ErrorDetail(BaseModel):
@@ -32,6 +34,53 @@ class SessionOut(BaseModel):
 
     account: AccountOut | None
     csrf_token: str
+
+
+class WorkOut(BaseModel):
+    """types.ts の Work に対応。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    cover_path: str  # frontend/public/ 内の公開URLのパス。
+
+
+class BenefitOut(BaseModel):
+    """types.ts の Benefit に対応。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    description: str
+
+
+class BenefitFileOut(BaseModel):
+    """types.ts の BenefitFile に対応。
+
+    サーバー上のファイルパス（file_path）はフィールドに持たず、応答に出せないようにする。
+    from_attributes で BenefitFileRow から作ると、file_path は読み捨てられる。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    position: int
+    title: str
+    mime_type: str
+
+
+class ReceiveOut(BaseModel):
+    """types.ts の ReceiveResponse に対応（GET /api/r/<token>）。
+
+    受け取ったアカウントや受け取り方法は持たない（spec 6.1、6.2）。
+    """
+
+    state: ViewState
+    work: WorkOut
+    benefit: BenefitOut
+    files: list[BenefitFileOut]  # position順。
 
 
 class ApiError(Exception):
