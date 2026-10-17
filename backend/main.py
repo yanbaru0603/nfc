@@ -4,9 +4,11 @@
 
     .venv/bin/uvicorn backend.main:create_app --factory
 
-SPA（frontend/dist）の配信は開発単位7で追加する。`/api` 配下の404はSPAのHTMLに
-置き換えないため、追加するときは `_http_exception_handler` の `/api` 以外の分岐で
-index.html を返すか、`/api` を除外した catch-all のルートを `api_router` の後に登録する。
+この起動方法ではSPAを配信しない（開発時はViteが画面を配信する）。デモ用には serve.py で
+起動し、ビルド済みのSPA（frontend/dist）も配信する（アクセスログの受取トークンも伏せる）。
+
+SPAは、`_http_exception_handler` の `/api` 以外のGET・HEADの404で backend.spa から返す。catch-all のルートにしないのは、OpenAPIに載せず、
+`/api` 配下の404・405を従来どおり共通のJSONのエラー形式で返すため。
 """
 
 import http
@@ -14,6 +16,7 @@ import logging
 import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, closing
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,7 +28,8 @@ from backend.config import Settings, load_settings
 from backend.db import connect, init_db
 from backend.routes import api_router
 from backend.schemas import ApiError, error_response
-from backend.security import install_security, security_headers_for
+from backend.security import install_security, is_api_path, security_headers_for
+from backend.spa import SpaFiles
 
 
 logger = logging.getLogger(__name__)
@@ -37,8 +41,13 @@ _HTTP_ERRORS: dict[int, tuple[str, str]] = {
 }
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """アプリを生成。settings を省略すると環境変数から読み込む。"""
+def create_app(settings: Settings | None = None, *, dist_dir: Path | None = None) -> FastAPI:
+    """アプリを生成。settings を省略すると環境変数から読み込む。
+
+    dist_dir はビルド済みのフロントエンドのディレクトリ（serve.py は DEFAULT_DIST_DIR を渡す）。
+    None、または index.html がなければSPAを配信しない。既定を None にするのは、テストの結果が
+    frontend/dist のビルドの有無で変わらないようにするため。dist の有無は生成時に判定する。
+    """
     if settings is None:
         settings = load_settings()
 
@@ -51,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="NFCグッズ特典受け取り PoC", lifespan=lifespan)
     app.state.settings = settings
+    app.state.spa = SpaFiles.load(dist_dir)
 
     # add_middleware は外側に積むので、最初に登録してユーザーミドルウェアの最も内側に置く。
     app.add_middleware(InternalErrorMiddleware)
@@ -72,11 +82,23 @@ async def _api_error_handler(request: Request, exc: Exception) -> Response:
 async def _http_exception_handler(request: Request, exc: Exception) -> Response:
     """ルートが見つからない404や405などを共通のエラー形式に変換。
 
-    `/api` 以外のパスも現時点では同じ形式で返す。SPAのフォールバックはここに足せる。
+    SPAを配信する場合は、`/api` 以外のGET・HEADの404で dist のファイルか index.html を返す。
+    `/api` 配下と、dist にない静的ファイルのパスは共通のエラー形式のまま返す。
     """
     assert isinstance(exc, StarletteHTTPException)
     if exc.status_code in {204, 304}:
         return Response(status_code=exc.status_code, headers=exc.headers)
+    spa: SpaFiles | None = request.app.state.spa
+    if (
+        spa is not None
+        and exc.status_code == 404
+        and request.method in {"GET", "HEAD"}
+        and not is_api_path(request.scope["path"])
+    ):
+        # 共通ヘッダーのミドルウェアと同じく、デコード済みの scope["path"] で判定する。
+        response = spa.response_for(request.scope["path"])
+        if response is not None:
+            return response
     code, message = _HTTP_ERRORS.get(
         exc.status_code,
         (_status_code_name(exc.status_code), "リクエストを処理できませんでした。"),
