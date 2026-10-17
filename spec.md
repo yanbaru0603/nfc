@@ -503,7 +503,7 @@ nfc/
 
 発行CLIは `issuer/` のNFC機器操作と、`backend/` の設定・DB・取得権の共通処理を使う。`backend/` からは `issuer/` やnfcpyを読み込まず、Webサーバーの起動にRC-S380を必要としないようにする。
 
-ランタイムのバージョンはルートの `mise.toml` で固定する（Python 3.14、Poetry 2、Node.js 26、pnpm 11）。`package.json` の `engines` と `packageManager` にも同じバージョンを記載する。
+ランタイムのバージョンはルートの `mise.toml` で固定する（Python 3.14、Poetry 2、Node.js 26、pnpm 11）。`package.json` の `engines`（Node.js）と `devEngines.packageManager`（pnpm）にも同じバージョンを記載する。
 
 Pythonの依存関係は `pyproject.toml` で管理し、バージョンを固定する。既存のnfcpy関連に加えて、`fastapi`、`uvicorn`、`itsdangerous`（SessionMiddlewareに必要）を通常の依存、`httpx`（TestClientに必要）を開発用の依存とする。
 

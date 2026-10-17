@@ -1,0 +1,4 @@
+# pnpmはmiseで管理し、起動時のバージョン解決・自動ダウンロードを避ける
+pmOnFail: ignore
+# 既存のnode_modulesを使い、スクリプト実行前の自動インストールを避ける
+verifyDepsBeforeRun: false
