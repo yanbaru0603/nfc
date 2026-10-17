@@ -1,0 +1,18 @@
+{
+  "session_id": "01a147a9-9c9f-7841-acc3-a52c41ea4735",
+  "model": "gpt-6-luna",
+  "observed_at": null,
+  "read_at": 1792203678.4667368,
+  "transcript_path": null,
+  "windows": [],
+  "token_percent": null,
+  "context_percent": null,
+  "context_used": null,
+  "token_remaining_percent": null,
+  "context_remaining_percent": null,
+  "context_remaining_tokens": null,
+  "context_capacity": null,
+  "threshold_used_percent": null,
+  "reasons": [],
+  "line": "token: N/A/100%  context: N/A/100% [N/A/N/A]"
+}

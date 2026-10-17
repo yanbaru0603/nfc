@@ -1,0 +1,31 @@
+{
+  "session_id": "01a147a9-5b7f-7d03-a160-519adf6bbb30",
+  "model": "gpt-6.1-sol",
+  "observed_at": "2026-10-17T02:21:54.185Z",
+  "read_at": 1792203714.25521,
+  "transcript_path": "/Users/yanbaru/.codex/sessions/2026/10/17/rollout-2026-10-17T11-20-43-01a147a9-5b7f-7d03-a160-519adf6bbb30.jsonl",
+  "windows": [
+    {
+      "name": "primary",
+      "used": 8.0,
+      "minutes": 300,
+      "resets_at": 1792218958
+    },
+    {
+      "name": "secondary",
+      "used": 1.0,
+      "minutes": 10080,
+      "resets_at": 1792714694
+    }
+  ],
+  "token_percent": 8.0,
+  "context_percent": 11.232631578947368,
+  "context_used": 53355,
+  "token_remaining_percent": 92.0,
+  "context_remaining_percent": 88.76736842105264,
+  "context_remaining_tokens": 421645,
+  "context_capacity": 475000,
+  "threshold_used_percent": 90,
+  "reasons": [],
+  "line": "token: 92%/100%  context: 89%/100% [421645/475000]"
+}
